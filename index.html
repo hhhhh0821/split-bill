@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🧾 万能分账神器</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+  <style>
+    body { background: #f0f4f8; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .container { max-width: 800px; }
+    .card { border: none; border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.04); }
+    .member-tag {
+      display: inline-flex; align-items: center; background: #e9ecef;
+      border-radius: 30px; padding: 5px 14px; margin: 4px; font-weight: 500;
+    }
+    .member-tag .btn-close { margin-left: 6px; font-size: 0.6rem; }
+    .bill-item { transition: all 0.2s; }
+    .bill-item:hover { background-color: #f8f9fa; }
+    .transfer-item { font-size: 1.1rem; padding: 10px 0; border-bottom: 1px solid #eee; }
+    .transfer-item:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <div class="container py-4">
+    <h1 class="text-center mb-4 fw-bold">
+      <i class="bi bi-calculator"></i> 万能分账神器
+    </h1>
+    <p class="text-center text-muted mb-4">任意人数 · 按人分摊 · 一键结算</p>
+
+    <!-- 成员管理 -->
+    <div class="card p-3 mb-4">
+      <div class="d-flex align-items-center justify-content-between mb-3">
+        <h5 class="mb-0"><i class="bi bi-people-fill me-2"></i>参与成员</h5>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#memberCollapse">
+          <i class="bi bi-plus-lg"></i> 管理成员
+        </button>
+      </div>
+      <div id="memberList" class="mb-2"></div>
+      <div class="collapse" id="memberCollapse">
+        <div class="input-group input-group-sm mt-2">
+          <input type="text" id="newMemberName" class="form-control" placeholder="输入新成员名字" maxlength="20">
+          <button class="btn btn-primary" type="button" onclick="addMember()"><i class="bi bi-person-plus"></i> 添加</button>
+        </div>
+        <small class="text-muted">点击成员旁边的 ✕ 可删除（至少保留 1 人）</small>
+      </div>
+    </div>
+
+    <!-- 添加消费 -->
+    <div class="card p-3 mb-4">
+      <h5 class="mb-3"><i class="bi bi-cart-plus me-2"></i>记一笔消费</h5>
+      <div class="mb-3">
+        <label class="form-label">消费项目</label>
+        <input type="text" id="descriptionInput" class="form-control" placeholder="比如：打车、吃饭、买零食..." maxlength="50">
+      </div>
+      <div class="row g-3">
+        <div class="col-md-5">
+          <label class="form-label">付款人</label>
+          <select id="payerSelect" class="form-select"></select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">金额</label>
+          <input type="number" id="amountInput" class="form-control" placeholder="0.00" step="0.01" min="0.01" value="">
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-success w-100" onclick="addBill()"><i class="bi bi-check-lg"></i> 添加</button>
+        </div>
+      </div>
+      <div class="mt-3">
+        <label class="form-label fw-semibold">参与分摊的人（至少选一个）</label>
+        <div id="participantCheckboxes" class="d-flex flex-wrap gap-2"></div>
+      </div>
+    </div>
+
+    <!-- 消费记录 -->
+    <div class="card p-3 mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>消费记录</h5>
+        <button class="btn btn-sm btn-outline-danger" onclick="clearAllBills()"><i class="bi bi-trash"></i> 清空</button>
+      </div>
+      <div id="billListContainer">
+        <p class="text-muted text-center py-3">还没有消费记录，先记一笔吧</p>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="d-flex flex-wrap gap-2 mb-4">
+      <button class="btn btn-primary btn-lg flex-fill" onclick="calculate()">
+        <i class="bi bi-calculator-fill me-2"></i>开始结算
+      </button>
+      <button class="btn btn-outline-secondary btn-lg flex-fill" onclick="exportResult()" id="exportResultBtn" disabled>
+        <i class="bi bi-file-earmark-text me-2"></i>导出结算方案 (TXT)
+      </button>
+      <button class="btn btn-outline-secondary btn-lg flex-fill" onclick="exportFullData()">
+        <i class="bi bi-download me-2"></i>导出全部账单 (JSON)
+      </button>
+    </div>
+
+    <!-- 结算结果 -->
+    <div id="resultArea" class="card p-4" style="display: none;"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const STORAGE_KEY = 'split_bill_data_v3';
+    let members = [];
+    let bills = [];  // { description, payer, amount, participants }
+
+    function loadData() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        members = data.members || [];
+        bills = data.bills || [];
+      }
+      if (members.length === 0) {
+        members = ['小A', '小B', '小C', '小D'];
+      }
+    }
+
+    function saveData() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ members, bills }));
+    }
+
+    function renderAll() {
+      renderMemberList();
+      renderPayerSelect();
+      renderParticipantCheckboxes();
+      renderBillList();
+      saveData();
+    }
+
+    function renderMemberList() {
+      const container = document.getElementById('memberList');
+      if (members.length === 0) {
+        container.innerHTML = '<span class="text-muted">尚未添加成员</span>';
+        return;
+      }
+      container.innerHTML = members.map((name, index) => `
+        <span class="member-tag">
+          ${escapeHtml(name)}
+          ${members.length > 1 ? `<span class="btn-close" style="cursor:pointer;" onclick="removeMember(${index})" title="移除"></span>` : ''}
+        </span>
+      `).join('');
+    }
+
+    function renderPayerSelect() {
+      const select = document.getElementById('payerSelect');
+      select.innerHTML = members.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    }
+
+    function renderParticipantCheckboxes() {
+      const container = document.getElementById('participantCheckboxes');
+      container.innerHTML = members.map(name => `
+        <div class="form-check form-check-inline">
+          <input class="form-check-input participant-check" type="checkbox" value="${escapeHtml(name)}" id="chk_${escapeHtml(name)}" checked>
+          <label class="form-check-label" for="chk_${escapeHtml(name)}">${escapeHtml(name)}</label>
+        </div>
+      `).join('');
+    }
+
+    function renderBillList() {
+      const container = document.getElementById('billListContainer');
+      if (bills.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-3">还没有消费记录，先记一笔吧</p>';
+        return;
+      }
+      container.innerHTML = bills.map((bill, index) => {
+        const desc = bill.description || '未命名消费';
+        const per = (bill.amount / bill.participants.length).toFixed(2);
+        return `
+          <div class="bill-item d-flex justify-content-between align-items-center py-2 px-2 rounded-3">
+            <div>
+              <span class="badge bg-info me-2">${escapeHtml(desc)}</span>
+              <strong>${escapeHtml(bill.payer)}</strong> 付了
+              <span class="text-success fw-bold">¥${bill.amount.toFixed(2)}</span>
+              <span class="text-muted ms-2">分摊给：${bill.participants.map(p => escapeHtml(p)).join('、')}（人均 ¥${per}）</span>
+            </div>
+            <i class="bi bi-x-circle text-danger" style="cursor:pointer; font-size: 1.2rem;" onclick="removeBill(${index})" title="删除"></i>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function addMember() {
+      const input = document.getElementById('newMemberName');
+      const name = input.value.trim();
+      if (!name) { alert('请输入名字'); return; }
+      if (members.includes(name)) { alert('名字已存在'); return; }
+      members.push(name);
+      input.value = '';
+      renderAll();
+    }
+
+    function removeMember(index) {
+      if (members.length <= 1) { alert('至少保留一个成员'); return; }
+      const removed = members[index];
+      bills = bills.filter(bill => {
+        if (bill.payer === removed) return false;
+        bill.participants = bill.participants.filter(p => p !== removed);
+        return bill.participants.length > 0;
+      });
+      members.splice(index, 1);
+      renderAll();
+    }
+
+    function addBill() {
+      const description = document.getElementById('descriptionInput').value.trim() || '未命名消费';
+      const payer = document.getElementById('payerSelect').value;
+      const amount = parseFloat(document.getElementById('amountInput').value);
+      if (isNaN(amount) || amount <= 0) { alert('请输入有效金额'); return; }
+      const checked = document.querySelectorAll('.participant-check:checked');
+      if (checked.length === 0) { alert('至少选一位参与人'); return; }
+      const participants = Array.from(checked).map(cb => cb.value);
+      bills.push({ description, payer, amount: Math.round(amount*100)/100, participants });
+      document.getElementById('descriptionInput').value = '';
+      document.getElementById('amountInput').value = '';
+      renderAll();
+    }
+
+    function removeBill(index) { bills.splice(index,1); renderAll(); }
+
+    function clearAllBills() {
+      if (confirm('确定清空所有消费记录吗？')) {
+        bills = [];
+        renderAll();
+        document.getElementById('resultArea').style.display = 'none';
+        document.getElementById('exportResultBtn').disabled = true;
+      }
+    }
+
+    function calculate() {
+      if (bills.length === 0) { alert('请先添加消费记录'); return; }
+      const paid = {}, should = {};
+      members.forEach(m => { paid[m] = 0; should[m] = 0; });
+      bills.forEach(bill => {
+        paid[bill.payer] += bill.amount;
+        const per = bill.amount / bill.participants.length;
+        bill.participants.forEach(p => { should[p] += per; });
+      });
+      const balance = {};
+      members.forEach(m => { balance[m] = paid[m] - should[m]; });
+
+      const creditors = [], debtors = [];
+      members.forEach(m => {
+        const val = Math.round(balance[m]*100)/100;
+        if (val > 0.001) creditors.push({name:m, amount:val});
+        else if (val < -0.001) debtors.push({name:m, amount:-val});
+      });
+      creditors.sort((a,b)=>b.amount-a.amount);
+      debtors.sort((a,b)=>b.amount-a.amount);
+
+      const transfers = [];
+      let i=0, j=0;
+      while (i < creditors.length && j < debtors.length) {
+        const c = creditors[i], d = debtors[j];
+        const settle = Math.min(c.amount, d.amount);
+        if (settle > 0.001) {
+          transfers.push({from:d.name, to:c.name, amount:Math.round(settle*100)/100});
+          c.amount = Math.round((c.amount-settle)*100)/100;
+          d.amount = Math.round((d.amount-settle)*100)/100;
+        }
+        if (c.amount < 0.001) i++;
+        if (d.amount < 0.001) j++;
+      }
+
+      const resultArea = document.getElementById('resultArea');
+      let html = `<h4><i class="bi bi-bar-chart-fill me-2"></i>个人明细</h4>`;
+      members.forEach(m => {
+        const bal = Math.round(balance[m]*100)/100;
+        let badge = '';
+        if (bal > 0.01) badge = `<span class="badge bg-success ms-2">应收回 ¥${bal.toFixed(2)}</span>`;
+        else if (bal < -0.01) badge = `<span class="badge bg-danger ms-2">需支付 ¥${(-bal).toFixed(2)}</span>`;
+        else badge = `<span class="badge bg-secondary ms-2">已平账</span>`;
+        html += `<div class="mb-2"><strong>${escapeHtml(m)}</strong> 实付 ¥${paid[m].toFixed(2)}，应付 ¥${should[m].toFixed(2)} ${badge}</div>`;
+      });
+      html += `<hr><h5 class="mt-4"><i class="bi bi-arrow-left-right me-2"></i>最优结算方案</h5>`;
+      if (transfers.length === 0) {
+        html += `<div class="alert alert-success">🎉 大家已平账，无需转账！</div>`;
+      } else {
+        html += `<div class="list-group list-group-flush">`;
+        transfers.forEach(t => {
+          html += `<div class="transfer-item d-flex justify-content-between"><span><strong>${escapeHtml(t.from)}</strong> <i class="bi bi-arrow-right mx-2"></i> <strong>${escapeHtml(t.to)}</strong></span> <span class="fw-bold text-primary">¥${t.amount.toFixed(2)}</span></div>`;
+        });
+        html += `</div>`;
+      }
+      resultArea.innerHTML = html;
+      resultArea.style.display = 'block';
+      document.getElementById('exportResultBtn').disabled = false;
+
+      window._lastResult = {
+        members, paid, should, balance, transfers, bills,
+        generatedAt: new Date().toLocaleString()
+      };
+    }
+
+    function exportResult() {
+      if (!window._lastResult) { alert('请先完成结算'); return; }
+      const { members, paid, should, balance, transfers, bills, generatedAt } = window._lastResult;
+      let text = `🧾 分账结算结果 (${generatedAt})\n`;
+      text += `成员：${members.join('、')}\n\n`;
+      text += `--- 消费明细 ---\n`;
+      bills.forEach(bill => {
+        const desc = bill.description || '未命名消费';
+        const per = (bill.amount / bill.participants.length).toFixed(2);
+        text += `【${desc}】${bill.payer} 付 ¥${bill.amount.toFixed(2)}，分摊给：${bill.participants.join('、')}（人均 ¥${per}）\n`;
+      });
+      text += `\n--- 个人汇总 ---\n`;
+      members.forEach(m => {
+        const bal = Math.round(balance[m]*100)/100;
+        text += `${m}: 实付 ¥${paid[m].toFixed(2)}，应付 ¥${should[m].toFixed(2)}`;
+        if (bal > 0.01) text += `，应收回 ¥${bal.toFixed(2)}`;
+        else if (bal < -0.01) text += `，需支付 ¥${(-bal).toFixed(2)}`;
+        else text += '，已平账';
+        text += '\n';
+      });
+      text += '\n--- 结算方案 ---\n';
+      if (transfers.length === 0) {
+        text += '大家已平账，无需转账。\n';
+      } else {
+        transfers.forEach(t => { text += `${t.from} 转账给 ${t.to} ¥${t.amount.toFixed(2)}\n`; });
+      }
+
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `分账结算方案_${new Date().toISOString().slice(0,10)}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {}).catch(() => {});
+      }
+    }
+
+    function exportFullData() {
+      const data = {
+        exportTime: new Date().toISOString(),
+        members,
+        bills: bills.map(b => ({ description: b.description, payer: b.payer, amount: b.amount, participants: b.participants }))
+      };
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `分账备份_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    loadData();
+    renderAll();
+    window.addEventListener('beforeunload', saveData);
+  </script>
+</body>
+</html>
